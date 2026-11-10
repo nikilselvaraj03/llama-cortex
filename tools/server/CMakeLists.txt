@@ -74,6 +74,6 @@ install(TARGETS ${TARGET} RUNTIME)
 target_link_libraries(${TARGET} PRIVATE llama-server-impl)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
-# the binary the user types is cortex-server; the CMake target keeps its upstream
+# the binary the user types is llama-cortex-server; the CMake target keeps its upstream
 # name so the rest of the build and any downstream references stay untouched
-set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME cortex-server)
+set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-cortex-server)

@@ -10,8 +10,8 @@
 
   <rect width="1240" height="820" fill="#ffffff"/>
 
-  <text x="40" y="48" font-size="26" font-weight="700" fill="#0f172a">cortex</text>
-  <text x="132" y="48" font-size="15" fill="#64748b">— inference path, and where each change sits</text>
+  <text x="40" y="48" font-size="26" font-weight="700" fill="#0f172a">llama-cortex</text>
+  <text x="252" y="48" font-size="15" fill="#64748b">— inference path, and where each change sits</text>
   <text x="40" y="72" font-size="12.5" fill="#94a3b8">blue = changed in this fork · grey = upstream path · numbers are measured on M1 Pro, Gemma-3-1B Q4_0</text>
 
   <!-- ============ ROW 1: pipeline ============ -->
@@ -116,28 +116,28 @@
   <g>
     <rect x="40" y="548" width="270" height="96" rx="8" fill="#ffffff" stroke="#dbeafe" stroke-width="1.5"/>
     <rect x="40" y="548" width="4" height="96" rx="2" fill="#2563eb"/>
-    <text x="58" y="572" font-size="12.5" font-weight="700" fill="#0f172a">sequential readahead</text>
-    <text x="58" y="592" font-size="11" fill="#475569">macOS had no fadvise; decode walks</text>
-    <text x="58" y="608" font-size="11" fill="#475569">weights in layer order</text>
-    <text x="58" y="630" font-size="11.5" font-weight="600" fill="#2563eb">neutral resident · helps out-of-RAM</text>
+    <text x="58" y="572" font-size="12.5" font-weight="700" fill="#0f172a">tokenization</text>
+    <text x="58" y="592" font-size="11" fill="#475569">one-pass special-token scan; SPM session</text>
+    <text x="58" y="608" font-size="11" fill="#475569">reused across fragments</text>
+    <text x="58" y="630" font-size="11.5" font-weight="600" fill="#2563eb">1.60× · byte-identical output</text>
   </g>
 
   <g>
     <rect x="330" y="548" width="270" height="96" rx="8" fill="#ffffff" stroke="#dbeafe" stroke-width="1.5"/>
     <rect x="330" y="548" width="4" height="96" rx="2" fill="#2563eb"/>
-    <text x="348" y="572" font-size="12.5" font-weight="700" fill="#0f172a">prefill ubatch</text>
-    <text x="348" y="592" font-size="11" fill="#475569">weights re-read per chunk; larger</text>
-    <text x="348" y="608" font-size="11" fill="#475569">ubatch amortises them further</text>
-    <text x="348" y="630" font-size="11.5" font-weight="600" fill="#2563eb">pp2048 1477 → 1696 tok/s</text>
+    <text x="348" y="572" font-size="12.5" font-weight="700" fill="#0f172a">sequential readahead</text>
+    <text x="348" y="592" font-size="11" fill="#475569">macOS had no fadvise; decode walks</text>
+    <text x="348" y="608" font-size="11" fill="#475569">weights in layer order</text>
+    <text x="348" y="630" font-size="11.5" font-weight="600" fill="#2563eb">neutral resident · helps out-of-RAM</text>
   </g>
 
   <g>
     <rect x="620" y="548" width="270" height="96" rx="8" fill="#ffffff" stroke="#dbeafe" stroke-width="1.5"/>
     <rect x="620" y="548" width="4" height="96" rx="2" fill="#2563eb"/>
-    <text x="638" y="572" font-size="12.5" font-weight="700" fill="#0f172a">cortex-cli / cortex-server</text>
-    <text x="638" y="592" font-size="11" fill="#475569">binaries, banner, log prefixes and</text>
-    <text x="638" y="608" font-size="11" fill="#475569">web UI all read cortex</text>
-    <text x="638" y="630" font-size="11.5" font-weight="600" fill="#2563eb">branding only · no perf change</text>
+    <text x="638" y="572" font-size="12.5" font-weight="700" fill="#0f172a">prefill ubatch</text>
+    <text x="638" y="592" font-size="11" fill="#475569">weights are re-read per chunk; a more</text>
+    <text x="638" y="608" font-size="11" fill="#475569">generous ubatch amortises them further</text>
+    <text x="638" y="630" font-size="11.5" font-weight="600" fill="#2563eb">pp2048 1477 → 1696 tok/s</text>
   </g>
 
   <g>

@@ -22,9 +22,9 @@ add_executable(${TARGET} main.cpp)
 target_link_libraries(${TARGET} PRIVATE llama-cli-impl)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
-# the binary the user types is cortex-cli; the CMake target keeps its upstream
+# the binary the user types is llama-cortex-cli; the CMake target keeps its upstream
 # name so the rest of the build and any downstream references stay untouched
-set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME cortex-cli)
+set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-cortex-cli)
 
 if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)

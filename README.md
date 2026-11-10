@@ -1,10 +1,10 @@
-# cortex
+# llama-cortex
 
 > A fork of [llama.cpp](https://github.com/ggml-org/llama.cpp) focused on
 > inference performance. Same engine, same GGUF models, same API — with the
-> decode path reworked where the measurements said it was worth it.
+> hot paths reworked where the measurements said it was worth it.
 
-![cortex architecture](docs/cortex-changes.svg)
+![llama-cortex architecture](docs/cortex-changes.svg)
 
 ## What changed
 
@@ -18,6 +18,7 @@ projection.
 | **Adaptive draft length** — pick `k` to maximise yield per unit of verification cost, slow-start at 4 | removes the −10% chat regression | — |
 | **Adaptive lookup length** — `size_n` follows draft acceptance, explores short when nothing matches | 2.6× → 4.4× on repetitive text | — |
 | **Output matrix at 4 bits** — Q4_0 is legal when `hidden % 256 ≠ 0`; the Q8_0 fallback was a format artifact, not a sensitivity result | **−19% bytes, +18.6% decode** | **+2.9% perplexity** |
+| **Tokenization** — one-pass special-token scan, and stop rebuilding the SPM session per fragment | **1.60×** (0.91 s → 0.57 s per MB) | none, byte-identical output |
 | **Sequential readahead** — macOS had no `fadvise`; decode walks weights in layer order | neutral when resident, helps when the model exceeds RAM | — |
 | **Prefill ubatch** — weights are re-read per chunk | pp2048 1477 → 1696 tok/s | — |
 
@@ -31,16 +32,16 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON
 cmake --build build -j --target llama-cli llama-server
 
 # interactive
-./build/bin/cortex-cli -m model.gguf
+./build/bin/llama-cortex-cli -m model.gguf
 
 # OpenAI-compatible server
-./build/bin/cortex-server -m model.gguf -c 8192
+./build/bin/llama-cortex-server -m model.gguf -c 8192
 ```
 
 Speculation is opt-in:
 
 ```bash
-./build/bin/cortex-cli -m model.gguf --spec-type ngram-simple
+./build/bin/llama-cortex-cli -m model.gguf --spec-type ngram-simple
 ```
 
 The gate and the adaptive length make it safe to leave on: it finds the

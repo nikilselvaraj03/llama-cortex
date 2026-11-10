@@ -61,19 +61,22 @@ void llama_log_set(ggml_log_callback log_callback, void * user_data) {
 // "llama_*:". Rewriting them here rebrands the whole tree's log output from one
 // place instead of renaming 45 functions and every call site.
 //
-// "llama" (5 bytes) -> "cortex" (6 bytes) grows the string by one, so the tail
-// is shifted right and the caller must supply a buffer with a spare byte. The
-// underscore is preserved: llama_model_loader -> cortex_model_loader.
+// "llama" (5 bytes) -> "llama_cortex" (12 bytes) grows the string by seven, so
+// the tail is shifted right and the caller must supply a buffer with seven spare
+// bytes. The underscore is preserved: llama_model_loader -> llama_cortex_model_loader.
 static void llama_log_rebrand(char * buf, size_t cap) {
     if (strncmp(buf, "llama", 5) != 0) {
         return;
     }
+    if (strncmp(buf, "llama_cortex", 12) == 0) {
+        return; // already rebranded
+    }
     const size_t n = strlen(buf);
-    if (n + 2 > cap) {
+    if (n + 8 > cap) {
         return; // no room to grow; leave the line as-is rather than truncate it
     }
-    memmove(buf + 6, buf + 5, n - 5 + 1); // shift the tail, including the NUL
-    memcpy(buf, "cortex", 6);
+    memmove(buf + 12, buf + 5, n - 5 + 1); // shift the tail, including the NUL
+    memcpy(buf + 5, "_cortex", 7);
 }
 
 static void llama_log_internal_v(ggml_log_level level, const char * format, va_list args) {
@@ -85,10 +88,10 @@ static void llama_log_internal_v(ggml_log_level level, const char * format, va_l
         llama_log_rebrand(buffer, sizeof(buffer));
         g_logger_state.log_callback(level, buffer, g_logger_state.log_callback_user_data);
     } else {
-        char * buffer2 = new char[len + 2]; // +1 for the NUL, +1 for the rebrand
+        char * buffer2 = new char[len + 8]; // +1 for the NUL, +7 for the rebrand
         vsnprintf(buffer2, len + 1, format, args_copy);
         buffer2[len] = 0;
-        llama_log_rebrand(buffer2, (size_t) len + 2);
+        llama_log_rebrand(buffer2, (size_t) len + 8);
         g_logger_state.log_callback(level, buffer2, g_logger_state.log_callback_user_data);
         delete[] buffer2;
     }

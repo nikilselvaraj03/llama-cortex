@@ -270,8 +270,12 @@ public:
 
                 size_t pos = 0;
                 while ((pos = m.find("llama_", pos)) != std::string::npos) {
-                    m.replace(pos, 6, "cortex_");
-                    pos += 7;
+                    if (m.compare(pos, 12, "llama_cortex") == 0) {
+                        pos += 12;
+                        continue;
+                    }
+                    m.replace(pos, 6, "llama_cortex_");
+                    pos += 13;
                 }
 
                 if (m.size() + 1 > entry.msg.size()) {
