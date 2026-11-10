@@ -90,7 +90,7 @@ static_assert(std::is_trivially_copyable<llm_symbol>::value, "llm_symbol is not 
 
 struct llm_bigram_spm {
     struct comparator {
-        bool operator()(llm_bigram_spm & l, llm_bigram_spm & r) {
+        bool operator()(const llm_bigram_spm & l, const llm_bigram_spm & r) const {
             return (l.score < r.score) || (l.score == r.score && l.left > r.left);
         }
     };
@@ -179,13 +179,18 @@ struct llm_tokenizer_spm_session {
 private:
     // no recursion: the merges of a long token can be deep
     void resegment(llm_symbol & symbol, std::vector<llama_token> & output) {
-        std::vector<const llm_symbol *> todo = { &symbol };
+        // todo and scratch are members: this runs once per output symbol, so a
+        // fresh vector and string here is an allocation per token
+        todo.clear();
+        todo.push_back(&symbol);
+
         while (!todo.empty()) {
             const llm_symbol & cur = *todo.back();
             todo.pop_back();
 
-            auto text = std::string(cur.text, cur.n);
-            auto token = vocab.text_to_token(text);
+            scratch.assign(cur.text, cur.n);
+
+            auto token = vocab.text_to_token(scratch);
 
             // Do we need to support is_unused?
             if (token != LLAMA_TOKEN_NULL) {
@@ -193,7 +198,7 @@ private:
                 continue;
             }
 
-            const auto p = rev_merge.find(text);
+            const auto p = rev_merge.find(scratch);
 
             if (p == rev_merge.end()) {
                 // output any symbols that did not form tokens as bytes.
@@ -214,8 +219,14 @@ private:
         if (left == -1 || right == -1) {
             return;
         }
-        const std::string text = std::string(symbols[left].text, symbols[left].n + symbols[right].n);
-        auto token = vocab.text_to_token(text);
+
+        // Reuse a scratch buffer instead of building a fresh std::string for
+        // every candidate. This is the hottest call in SPM tokenization - once
+        // per adjacent pair plus twice per merge - and the string was only ever
+        // used as a lookup key, so the allocation bought nothing.
+        scratch.assign(symbols[left].text, symbols[left].n + symbols[right].n);
+
+        auto token = vocab.text_to_token(scratch);
 
         if (token == LLAMA_TOKEN_NULL) {
             return;
@@ -231,12 +242,12 @@ private:
         bigram.left  = left;
         bigram.right = right;
         bigram.score = tok_data.score;
-        bigram.size  = text.size();
+        bigram.size  = scratch.size();
 
         work_queue.push(bigram);
 
         // Do we need to support is_unused?
-        rev_merge[text] = std::make_pair(left, right);
+        rev_merge[scratch] = std::make_pair(left, right);
     }
 
     const llama_vocab & vocab;
@@ -245,6 +256,12 @@ private:
 
     std::vector<llm_symbol> symbols;
     llm_bigram_spm::queue work_queue;
+
+    // reused lookup buffer, see try_add_bigram / resegment
+    std::string scratch;
+
+    // reused work stack for resegment
+    std::vector<const llm_symbol *> todo;
 
     // text -> the symbol pair that produced it. A hash map, not std::map: the
     // keys are substrings, so the tree paid a string comparison per level plus
