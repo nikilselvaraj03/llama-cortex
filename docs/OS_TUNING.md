@@ -226,7 +226,85 @@ macOS 26.6.2, Apple clang 21, Metal backend, `recommendedMaxWorkingSetSize`
 
 ---
 
-## 6. Status — what is wired, and what is next
+## 6. Prior art, and what is actually new
+
+Honesty matters more than novelty, so: **most of these mechanisms have prior
+art, and `cortex` does not claim to have invented them.**
+
+| mechanism | prior art | what `cortex` adds |
+|---|---|---|
+| routing-predicted expert prefetch | **Mixtral-offloading** (`arXiv:2312.17238`) predicts the next layer's routing from the hidden state and speculatively prefetches experts | a confidence-gated conditional model `P(e@L \| e@L-1)` that is testable off-device |
+| admission-controlled replacement | **HotPrefix** (SIGMOD'26) admits only hot prefixes into the CPU tier | generalised to any tier, with a pressure-scaled bar |
+| prefetch-on-schedule | **Pie** (`arXiv:2411.09317`) hides paging because the layer order is known a priori | a cost model that *chooses* the schedule from measured bandwidth |
+| MGLRU-style refault | Linux 6.1+ multi-generational LRU | applied to KV/expert blocks, with a replay simulator |
+| COW weight sharing | vLLM / SGLang share **KV** blocks | the same idea applied to **weights** |
+
+The contribution is the *packaging*: one dependency-free library where each
+policy is a named, swappable, unit-tested object, plus a planner that measures
+the machine instead of assuming a datasheet.
+
+## 7. Apple Silicon caveat — read this before trusting the numbers
+
+On Apple Silicon there is **one physical memory pool**. `vram` and `ram` are not
+additive; the GPU working set is a *residency budget* carved out of the same
+RAM. `llama-cortex` detects this (iGPU, or accelerator total > ½ host RAM) and
+builds the hierarchy as `vram = working set`, `wired_ram = 0`,
+`pageable_ram = ram − vram`, so the tiers do not double-count.
+
+This also means the classic tiering playbook does not transfer directly.
+*Evaluating the Applicability of LLM Inference Optimizations on Apple Silicon*
+(`arXiv:2610.31479`) finds that KV pruning can help on Apple while
+**speculative decoding reduces throughput**, and that public Metal lacks
+asynchronous copy — so batch-1 decode cannot hide a transfer. Treat the policy
+table as a *decision aid for the working-set ratio*, not as a promise of
+speedup on this hardware.
+
+## 8. Integration map — where a governor actually plugs in
+
+Anchored against commit `45c8ea8`, so the next step is a diff, not a search.
+
+**KV / memory — the primary insertion point**
+- `src/llama-memory.h:104` — `struct llama_memory_i`, the single interface every
+  KV variant implements (`iswa`, `dsa`, `dsv4`, `msa`, `hybrid`, `recurrent`).
+- `src/llama-model.cpp:2914` — `llama_model::create_memory()` picks the concrete
+  cache; `src/llama-context.cpp:550` installs it.
+- A **decorator** over `llama_memory_i` needs no changes to any variant:
+  `init_batch` / `init_update` / `apply` all funnel through it, and
+  `memory_breakdown()` (`src/llama-memory.h:151`) already reports bytes per
+  `ggml_backend_buffer_type_t`, so VRAM/RAM accounting needs no new plumbing.
+
+**Weights — placement**
+- `src/llama-model.cpp:1677` `load_tensors()` — where `n_gpu_layers` becomes
+  `i_gpu_start` and each layer is bound to a device; `:1742` already calls
+  `ggml_backend_dev_memory()` to split by free VRAM.
+- `src/llama-model.cpp:1340` `llama_model::impl` — the `cpu_buft_list` /
+  `gpu_buft_list` that decide placement.
+
+**Existing hooks a governor can use today**
+
+| hook | anchor | granularity |
+|---|---|---|
+| `ggml_backend_sched_eval_callback` | `ggml/include/ggml-backend.h:333` | per graph node |
+| `ggml_backend_sched_copy_callback` | `ggml-backend.h:342`, set at `src/llama-context.cpp:790` | per split weight copy |
+| `ggml_backend_sched_prefetch_inputs` | `ggml/src/ggml-backend.cpp:2152` | per split, async prefetch |
+| `llama_prefetch(ranges)` | `src/llama-mmap.h:90` | arbitrary host page ranges |
+| `layer_filter_cb` / `layer_share_cb` | `src/llama-memory.h:106,112` | per layer, at cache construction |
+
+**What llama.cpp already has, so `cortex` does not duplicate it**
+- KV cache: a **flat, contiguous per-layer tensor** `[n_embd_k_gqa, kv_size,
+  n_stream]` (`src/llama-kv-cache.cpp:233`) with *cell metadata* over it
+  (`llama_kv_cells`, `src/llama-kv-cells.h:68`) and a ring/slot scan
+  (`find_slot`, `src/llama-kv-cache.cpp:950`). There is **no block table and no
+  eviction to host** — it is not paging.
+- Prefix caching: **yes, but only at the server layer** — whole serialized state
+  blobs in `server_prompt_cache` (`tools/server/server-task.h:733`), not
+  KV-block granular.
+- COW: **no.** Only aliasing via `layer_share_cb` / `mem_other`.
+- The closest existing pager is `llama_moe_cache` (`src/llama-moe-cache.h:13`),
+  an LRU/CRF device-resident expert cache — the template a governor should
+  generalise.
+
+## 9. Status — what is wired, and what is next
 
 Stated plainly, because the difference matters.
 
@@ -248,7 +326,7 @@ before it is wired in.
 
 ---
 
-## 7. References
+## 10. References
 
 Operating systems
 - Corbet, Rubini, Kroah-Hartman — *Linux Device Drivers* / kernel MM docs

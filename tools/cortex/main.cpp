@@ -208,12 +208,33 @@ int main(int argc, char ** argv) {
     if (sim_vram) { vram_total = sim_vram; vram_free = sim_vram; printf("  [sim] vram overridden to %s\n", fmt_bytes(sim_vram).c_str()); }
     if (sim_ram)  { ram = sim_ram; printf("  [sim] ram overridden to %s\n", fmt_bytes(sim_ram).c_str()); }
 
-    // measured-controller defaults for Apple-class unified memory; on a discrete
-    // GPU the numbers are supplied by the device, so these are only the RAM/disk
-    // tiers.  See docs/OS_TUNING.md for how to measure them properly.
-    auto h = cortex::memory_hierarchy::make(
-        vram_total, ram, disk,
-        /*bw_vram=*/200.0, /*bw_ram=*/200.0, /*bw_disk=*/3.0);
+    // Unified memory (Apple Silicon, iGPUs): the accelerator's working set is
+    // carved out of the *same* physical RAM, so vram and ram must not be added
+    // together.  Detect it and build a single-pool hierarchy instead.
+    bool unified = false;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        if (ggml_backend_dev_type(ggml_backend_dev_get(i)) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            unified = true;
+        }
+    }
+    if (!unified && vram_total > 0 && ram > 0 && vram_total > ram / 2) {
+        unified = true; // the accelerator total is a slice of host RAM
+    }
+
+    cortex::memory_hierarchy h;
+    if (unified) {
+        printf("  [unified memory] vram is a residency budget inside host RAM, not a separate pool\n");
+        h.tiers = {
+            { cortex::tier::vram,         vram_total, 200.0, 2.0 },
+            { cortex::tier::wired_ram,    0,          200.0, 20.0 },
+            { cortex::tier::pageable_ram, ram > vram_total ? ram - vram_total : 0, 120.0, 60.0 },
+            { cortex::tier::disk,         disk,       3.0,   500.0 },
+        };
+    } else {
+        h = cortex::memory_hierarchy::make(
+            vram_total, ram, disk,
+            /*bw_vram=*/200.0, /*bw_ram=*/200.0, /*bw_disk=*/3.0);
+    }
 
     printf("== memory hierarchy =================================================\n");
     printf("%s\n", h.describe().c_str());
