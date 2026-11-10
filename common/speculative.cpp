@@ -2169,11 +2169,58 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
         return true;
     }
 
+    // Choose the lookup length from the acceptance signal.
+    //
+    // size_n dominates the win far more than size_m: a shorter lookup matches
+    // more often, so it proposes more drafts. On a verbatim-copy prompt the
+    // measured decode rate was 263 tok/s at size_n=12 (the default), 350 at 6,
+    // 418 at 3 and 435 at 2. But a short lookup also matches spuriously on
+    // free-form text, which is what the gate and the adaptive length are for.
+    //
+    // So: stay at the configured (precise) length until acceptance proves the
+    // text is actually repetitive, then shorten it to harvest the matches.
+    // Fraction of drafts that were accepted at all. This is a better signal for
+    // "is this text repetitive" than the per-token rate, which is diluted by
+    // long drafts: on a verbatim-copy prompt the per-token rate was 0.78 while
+    // every single draft was accepted (5/5).
+    double draft_acceptance() const {
+        return n_gen_drafts > 0 ? (double) n_acc_drafts / (double) n_gen_drafts : 0.0;
+    }
+
+    int current_size_n() const {
+        if (win_rounds < WARMUP_ROUNDS) {
+            return config.size_ngram;
+        }
+
+        // Exploration. If the configured lookup has produced nothing at all, it
+        // is too long for this text: a repeated line shorter than size_n can
+        // never match, so the engine sits at zero drafts and learns nothing.
+        // Try a short lookup; if it proposes drafts that get rejected, the
+        // acceptance gate turns drafting back off.
+        if (n_gen_drafts == 0) {
+            return 2;
+        }
+
+        const double d = draft_acceptance();
+        if (d >= 0.90) {
+            return 2;
+        }
+        if (d >= 0.60) {
+            return 4;
+        }
+        return config.size_ngram;
+    }
+
     void draft(common_speculative_draft_params_vec & dparams) override {
         assert(dparams.size() == n_seq);
 
         const bool drafting = should_draft();
         const int  n_opt    = drafting ? optimal_draft_len() : 0;
+
+        common_ngram_simple_config cfg = config;
+        if (drafting) {
+            cfg.size_ngram = (uint16_t) current_size_n();
+        }
 
         if (!drafting && !gated_off) {
             SPC_TRC("%s", "ngram-simple: acceptance below threshold, drafting disabled\n");
@@ -2195,7 +2242,7 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
                 continue;
             }
 
-            *dp.result = common_ngram_simple_draft(config, *dp.prompt, dp.id_last);
+            *dp.result = common_ngram_simple_draft(cfg, *dp.prompt, dp.id_last);
 
             // truncate to the length that maximises yield per unit of verification
             // cost at the current acceptance rate
