@@ -118,6 +118,11 @@ struct llm_tokenizer_spm_session {
         rev_merge.clear();
     }
 
+    // NOTE: a direct-mapped cache in front of the vocab lookup was tried and
+    // measured slower at every size (256/1024/2048/4096 entries): most SPM
+    // probes are misses, so a miss paid the cache hash on top of the map hash.
+    // Do not re-add it without a hit-rate measurement.
+
     void tokenize(const std::string & text, std::vector<llama_token> & output) {
         // split string into utf8 chars
         int index = 0;
@@ -190,7 +195,7 @@ private:
 
             scratch.assign(cur.text, cur.n);
 
-            auto token = vocab.text_to_token(scratch);
+            const auto token = vocab.text_to_token(scratch);
 
             // Do we need to support is_unused?
             if (token != LLAMA_TOKEN_NULL) {
@@ -220,13 +225,14 @@ private:
             return;
         }
 
-        // Reuse a scratch buffer instead of building a fresh std::string for
-        // every candidate. This is the hottest call in SPM tokenization - once
-        // per adjacent pair plus twice per merge - and the string was only ever
-        // used as a lookup key, so the allocation bought nothing.
-        scratch.assign(symbols[left].text, symbols[left].n + symbols[right].n);
+        const size_t len = symbols[left].n + symbols[right].n;
 
-        auto token = vocab.text_to_token(scratch);
+        // This is the hottest call in SPM tokenization - once per adjacent pair
+        // plus twice per merge - so it reuses the scratch buffer rather than
+        // building a fresh std::string for a lookup key.
+        scratch.assign(symbols[left].text, len);
+
+        const auto token = vocab.text_to_token(scratch);
 
         if (token == LLAMA_TOKEN_NULL) {
             return;
@@ -242,7 +248,7 @@ private:
         bigram.left  = left;
         bigram.right = right;
         bigram.score = tok_data.score;
-        bigram.size  = scratch.size();
+        bigram.size  = len;
 
         work_queue.push(bigram);
 

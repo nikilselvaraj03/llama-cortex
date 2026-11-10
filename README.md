@@ -18,7 +18,7 @@ projection.
 | **Adaptive draft length** — pick `k` to maximise yield per unit of verification cost, slow-start at 4 | removes the −10% chat regression | — |
 | **Adaptive lookup length** — `size_n` follows draft acceptance, explores short when nothing matches | 2.6× → 4.4× on repetitive text | — |
 | **Output matrix at 4 bits** — Q4_0 is legal when `hidden % 256 ≠ 0`; the Q8_0 fallback was a format artifact, not a sensitivity result | **−19% bytes, +18.6% decode** | **+2.9% perplexity** |
-| **Tokenization** — one-pass special-token scan, and stop rebuilding the SPM session per fragment | **1.60×** (0.91 s → 0.57 s per MB) | none, byte-identical output |
+| **Tokenization** — one-pass special-token scan, and stop rebuilding the SPM session per fragment | **1.5×** (0.91 s → 0.60 s per MB) | none, byte-identical output |
 | **Sequential readahead** — macOS had no `fadvise`; decode walks weights in layer order | neutral when resident, helps when the model exceeds RAM | — |
 | **Prefill ubatch** — weights are re-read per chunk | pp2048 1477 → 1696 tok/s | — |
 
