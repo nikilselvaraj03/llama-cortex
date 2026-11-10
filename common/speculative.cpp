@@ -2076,7 +2076,7 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
     // it is not paying. This makes the feature safe to leave on: it finds the
     // copy-heavy stretches of a workload and gets out of the way elsewhere.
     static constexpr int    WINDOW_ROUNDS = 16;   // recent draft rounds to judge
-    static constexpr double MIN_ACCEPT    = 0.35; // below this, drafting costs more than it saves
+    static constexpr double MIN_ACCEPT    = 0.60; // break-even: at 5x batch amortisation, verifying k drafts costs ~2.4x a single token, so expected tokens must exceed 2.4 -> alpha ~0.6
     static constexpr int    WARMUP_ROUNDS = 4;    // always draft at first, to get a signal
 
     std::vector<int> last_draft_len; // per seq: tokens drafted in the last round
@@ -2184,7 +2184,7 @@ struct common_speculative_impl_ngram_map_k : public common_speculative_impl {
     // target is actually amortising it. Track a rolling acceptance rate and stop
     // drafting when it is not.
     static constexpr int    WINDOW_ROUNDS = 16;
-    static constexpr double MIN_ACCEPT    = 0.35;
+    static constexpr double MIN_ACCEPT    = 0.60;
     static constexpr int    WARMUP_ROUNDS = 4;
 
     std::vector<int> last_draft_len;
