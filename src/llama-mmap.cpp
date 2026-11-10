@@ -753,6 +753,20 @@ struct llama_mmap::impl {
                 LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_RANDOM) failed: %s\n",
                         strerror(errno));
             }
+        } else {
+            // Decode walks the weights in layer order, one pass per token, so the
+            // access pattern is sequential at the granularity that matters. Linux
+            // already gets this via posix_fadvise above; macOS has no fadvise, so
+            // without this the mapping carries no readahead hint at all and a model
+            // that does not fit in RAM is faulted in page by page, in the order the
+            // scheduler happens to reach it.
+            //
+            // This is a no-op when the model fits (the pages are already resident)
+            // and costs one syscall at load time.
+            if (posix_madvise(addr, file->size(), POSIX_MADV_SEQUENTIAL)) {
+                LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_SEQUENTIAL) failed: %s\n",
+                        strerror(errno));
+            }
         }
 
         mapped_fragments.emplace_back(0, file->size());
