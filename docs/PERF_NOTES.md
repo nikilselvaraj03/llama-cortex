@@ -112,7 +112,45 @@ a model-side change, not a kernel one.
 
 ---
 
-## 5. Reproducing
+## 5. The real generic win: gated n-gram speculation
+
+Decode is bandwidth-bound, so the only way to beat one-token-per-weight-read is
+to get more than one token per weight read. Speculative decoding does exactly
+that, and n-gram drafting needs **no draft model** — it proposes continuations by
+matching the current suffix against the context, then the target verifies them in
+one batched pass. Verification is exact: the output distribution is unchanged.
+
+The catch is that a rejected draft still costs a verification pass. Measured on
+Gemma-3-1B Q4_0, 120 tokens:
+
+| task | base | ungated | gated |
+|---|---|---|---|
+| copy / rewrite | 97.7 | 267.7 (2.68x) | **261.8 (2.68x)** |
+| code | 97.7 | 95.7 (-4%) | 99.9 (+2.2%) |
+| chat | 99.0 | 98.6 (-1%) | 98.0 (-1%) |
+
+So the win is large and real on copy-heavy work, and the loss elsewhere is the
+cost of verifying drafts that get rejected.
+
+**The gate.** Track a rolling acceptance rate over the last 16 rounds (halved when
+full, so it follows the recent regime) and stop drafting below the break-even
+point. The break-even is not a guess: at the measured 5x batch amortisation,
+verifying `k=8` drafts costs about `1 + (k-1)/5 = 2.4x` a single token, so the
+expected accepted-token yield must exceed 2.4. For a geometric acceptance model
+that is `alpha ~= 0.6`. At `alpha=0.5` the yield is 1.99 against a 2.4 cost — a
+0.83x slowdown.
+
+This makes the feature safe to leave on: it finds the copy-heavy stretches of a
+workload and gets out of the way elsewhere. Implemented for `ngram-simple` and
+`ngram-map-k`; `ngram-mod` already had a different adaptive behaviour (it resets
+its store on a low-acceptance streak but keeps drafting).
+
+**Why this matters more than kernel tuning:** it is the only lever that changes
+the bytes-per-token ratio rather than the efficiency of moving them.
+
+---
+
+## 6. Reproducing
 
 ```bash
 export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
