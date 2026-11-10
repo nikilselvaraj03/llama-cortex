@@ -1,6 +1,6 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
     <!-- tree rings: an off-centre pith, each ring a year of accumulated history -->
-    <circle cx="200" cy="208" r="80" stroke-width="40" stroke="currentColor" stroke-linecap="round" pathLength="1" stroke-dasharray="0.82 0.18" stroke-dashoffset="0.0"/>
-    <circle cx="200" cy="208" r="152" stroke-width="38" stroke="currentColor" stroke-linecap="round" pathLength="1" stroke-dasharray="0.8 0.2" stroke-dashoffset="0.38"/>
-    <circle cx="200" cy="208" r="224" stroke-width="36" stroke="currentColor" stroke-linecap="round" pathLength="1" stroke-dasharray="0.78 0.22" stroke-dashoffset="0.66"/>
+    <circle cx="244" cy="250" r="72" stroke-width="40" stroke="currentColor" stroke-linecap="round" pathLength="1" stroke-dasharray="0.82 0.18" stroke-dashoffset="0.0"/>
+    <circle cx="244" cy="250" r="136" stroke-width="38" stroke="currentColor" stroke-linecap="round" pathLength="1" stroke-dasharray="0.8 0.2" stroke-dashoffset="0.38"/>
+    <circle cx="244" cy="250" r="200" stroke-width="36" stroke="currentColor" stroke-linecap="round" pathLength="1" stroke-dasharray="0.78 0.22" stroke-dashoffset="0.66"/>
 </svg>

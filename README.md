@@ -12,6 +12,12 @@
 >
 > ![cortex architecture](docs/cortex-architecture.svg)
 >
+> **Status: analysis tooling, not a speedup.** The governor is a standalone
+> binary. It reads device memory and model geometry and prints a plan; it is
+> **not** wired into the inference path, and `src/` is unmodified from upstream.
+> No throughput improvement is claimed or measured. The numbers below are a
+> policy-replay simulation, not end-to-end inference.
+>
 > **What it adds**
 > - a dependency-free C++17 policy library (`cortex/`) — tier + cost model,
 >   adaptive transfer granularity, cost-model placement planner, and five

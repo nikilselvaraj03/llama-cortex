@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Logo } from '$lib/components/app';
 	import { CHAT_GREETING_ENTER_DELAY_MS } from '$lib/constants';
 	import { serverStore } from '$lib/stores';
 
@@ -43,6 +44,11 @@
 	]}
 >
 	<div style:transition-delay="{CHAT_GREETING_ENTER_DELAY_MS}ms" class={enterClass}>
+		<div class="mb-3 flex items-center justify-center gap-2 text-muted-foreground">
+			<Logo style="--size: 1.5rem" />
+			<span class="text-sm font-medium tracking-tight">cortex</span>
+		</div>
+
 		<h1 class="mb-2 text-2xl font-semibold tracking-tight md:text-3xl">Hello there</h1>
 
 		<p class="text-muted-foreground md:text-lg">
