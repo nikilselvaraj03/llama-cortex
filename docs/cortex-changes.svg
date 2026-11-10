@@ -17,13 +17,13 @@
   <!-- ============ ROW 1: pipeline ============ -->
   <text x="40" y="112" font-size="11" font-weight="700" fill="#94a3b8" letter-spacing="1.2">REQUEST PATH</text>
 
-  <rect x="40" y="126" width="150" height="64" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="115" y="152" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">tokenize</text>
-  <text x="115" y="172" font-size="11" fill="#64748b" text-anchor="middle">CPU</text>
+  <rect x="40" y="126" width="150" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="115" y="152" font-size="13" font-weight="600" fill="#1e40af" text-anchor="middle">tokenize</text>
+  <text x="115" y="172" font-size="11" fill="#3b82f6" text-anchor="middle">CPU · 1.5× faster</text>
 
-  <rect x="230" y="126" width="170" height="64" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="315" y="152" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">prefill</text>
-  <text x="315" y="172" font-size="11" fill="#64748b" text-anchor="middle">GEMM · compute-bound</text>
+  <rect x="230" y="126" width="170" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="315" y="152" font-size="13" font-weight="600" fill="#1e40af" text-anchor="middle">prefill</text>
+  <text x="315" y="172" font-size="11" fill="#3b82f6" text-anchor="middle">GEMM · ubatch tuned</text>
 
   <rect x="440" y="126" width="180" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
   <text x="530" y="152" font-size="13" font-weight="600" fill="#1e40af" text-anchor="middle">decode loop</text>
