@@ -150,7 +150,60 @@ the bytes-per-token ratio rather than the efficiency of moving them.
 
 ---
 
-## 6. Reproducing
+## 6. Tokenization: two real wins, one dead end
+
+Tokenization is not where inference time goes — for a 10k-token prompt it is
+~0.3% of prefill — but it is pure CPU, so it is measurable in isolation and it
+was leaving 1.5x on the table.
+
+Profiling a 13 MB tokenize run (`sample`, 6 s) put **4034 of ~4880 active
+samples in `tokenizer_st_partition`**. That function walked the whole text once
+per special token, and a chat model has ~100 of them: O(special_tokens ×
+text_length). Indexing the tokens by first byte and doing a single longest-match
+pass is equivalent (the cache is sorted by descending length, so the first match
+at a position is the longest) and removes the repeated scans.
+
+The second win was lifetime, not algorithm: `llm_tokenizer_spm_session` was
+constructed **inside the per-fragment loop**, so every fragment rebuilt a
+vector, a priority queue and a map. Hoisting it and resetting between fragments
+keeps the allocations. Swapping `rev_merge` from `std::map` to a hash map
+removed a string comparison per tree level plus a rebalance per insert.
+
+| stage | 1 MB, min of 10 |
+|---|---|
+| before | 0.91 s |
+| one-pass partition | 0.68 s |
+| + session reuse, hash map | 0.59 s |
+
+**1.5x, byte-identical**: 295,216 tokens over the full wikitext-2 test set, same
+md5 before and after.
+
+### Dead end: a direct-mapped lookup cache
+
+The remaining cost is the string-keyed vocab hash lookup (~47% of active
+samples). A direct-mapped cache in front of it — the CPU-L1 idea — was
+implemented and measured **slower at every size**:
+
+| entries | 1 MB |
+|---|---|
+| 256 | 0.64 s |
+| 1024 | 0.60 s |
+| 2048 | 0.62 s |
+| 4096 | 0.62 s |
+| no cache | 0.59 s |
+
+Most SPM probes are misses, so a miss paid the cache hash on top of the map
+hash. Reverted; the source carries a comment saying not to re-add it without a
+hit-rate measurement.
+
+### Measurement caveat
+
+The 1.60x figure that appeared in an earlier commit was measured while the
+desktop app was idle. With it running (load average ~4 on 8 cores) the same
+binary measures 0.59–0.61 s. The README now says 1.5x. **Take min-of-N, and
+check `uptime` before believing a small delta.**
+
+## 7. Reproducing
 
 ```bash
 export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
