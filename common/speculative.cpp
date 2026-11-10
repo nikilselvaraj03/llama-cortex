@@ -2179,11 +2179,28 @@ struct common_speculative_impl_ngram_map_k : public common_speculative_impl {
     // n_seq configs
     std::vector<common_ngram_map> config;
 
+    // Adaptive gating, same rationale as ngram-simple: a rejected draft still
+    // costs a verification pass over the target, so drafting only pays while the
+    // target is actually amortising it. Track a rolling acceptance rate and stop
+    // drafting when it is not.
+    static constexpr int    WINDOW_ROUNDS = 16;
+    static constexpr double MIN_ACCEPT    = 0.35;
+    static constexpr int    WARMUP_ROUNDS = 4;
+
+    std::vector<int> last_draft_len;
+
+    int win_drafted  = 0;
+    int win_accepted = 0;
+    int win_rounds   = 0;
+
+    bool gated_off = false;
+
     common_speculative_impl_ngram_map_k(
             const common_ngram_map & config,
             uint32_t n_seq)
         : common_speculative_impl(config.key_only ? COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K
             : COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V, n_seq, config.size_value)
+        , last_draft_len(n_seq, 0)
     {
         for (uint32_t i = 0; i < n_seq; i++) {
             this->config.push_back(config);
@@ -2192,6 +2209,16 @@ struct common_speculative_impl_ngram_map_k : public common_speculative_impl {
         SPC_TRC("adding speculative implementation '%s'\n", common_speculative_type_to_str(this->type).c_str());
         SPC_TRC("- size_key=%d, size_value=%d, key_only=%d, min_hits=%d\n",
                 config.size_key, config.size_value, config.key_only, config.min_hits);
+    }
+
+    bool should_draft() const {
+        if (win_rounds < WARMUP_ROUNDS) {
+            return true;
+        }
+        if (win_drafted <= 0) {
+            return true;
+        }
+        return (double) win_accepted / (double) win_drafted >= MIN_ACCEPT;
     }
 
     void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {
@@ -2208,13 +2235,30 @@ struct common_speculative_impl_ngram_map_k : public common_speculative_impl {
     void draft(common_speculative_draft_params_vec & dparams) override {
         assert(dparams.size() == n_seq);
 
+        const bool drafting = should_draft();
+
+        if (!drafting && !gated_off) {
+            SPC_TRC("%s", "ngram-map-k: acceptance below threshold, drafting disabled\n");
+            gated_off = true;
+        } else if (drafting && gated_off) {
+            SPC_TRC("%s", "ngram-map-k: acceptance recovered, drafting enabled\n");
+            gated_off = false;
+        }
+
         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
             auto & dp = dparams[seq_id];
             if (!dp.drafting) {
                 continue;
             }
 
+            if (!drafting) {
+                dp.result->clear();
+                last_draft_len[seq_id] = 0;
+                continue;
+            }
+
             common_ngram_map_draft(config[seq_id], *dp.prompt, dp.id_last, *dp.result);
+            last_draft_len[seq_id] = (int) dp.result->size();
         }
     }
 
@@ -2226,6 +2270,27 @@ struct common_speculative_impl_ngram_map_k : public common_speculative_impl {
         }
 
         common_ngram_map_accept(config[seq_id], n_accepted);
+
+        if (seq_id < 0 || seq_id >= (llama_seq_id) last_draft_len.size()) {
+            return;
+        }
+
+        const int drafted = last_draft_len[seq_id];
+        if (drafted <= 0) {
+            return;
+        }
+
+        win_drafted  += drafted;
+        win_accepted += std::min<int>(n_accepted, drafted);
+        win_rounds   += 1;
+
+        if (win_rounds >= WINDOW_ROUNDS) {
+            win_drafted  /= 2;
+            win_accepted /= 2;
+            win_rounds   /= 2;
+        }
+
+        last_draft_len[seq_id] = 0;
     }
 };
 
