@@ -2064,16 +2064,50 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
     // shared across all sequences
     common_ngram_simple_config config;
 
+    // Adaptive gating.
+    //
+    // n-gram drafting is a large win when the model is copying from the context
+    // (measured 2.68x on a verbatim-repeat prompt) and a small loss when it is
+    // not (-1% on chat, -4% on code), because a rejected draft still costs a
+    // verification pass over the target. The draft itself is free, so the only
+    // question is whether the target's verification is being amortised.
+    //
+    // Track a rolling acceptance rate over recent rounds and stop drafting when
+    // it is not paying. This makes the feature safe to leave on: it finds the
+    // copy-heavy stretches of a workload and gets out of the way elsewhere.
+    static constexpr int    WINDOW_ROUNDS = 16;   // recent draft rounds to judge
+    static constexpr double MIN_ACCEPT    = 0.35; // below this, drafting costs more than it saves
+    static constexpr int    WARMUP_ROUNDS = 4;    // always draft at first, to get a signal
+
+    std::vector<int> last_draft_len; // per seq: tokens drafted in the last round
+
+    int win_drafted  = 0;
+    int win_accepted = 0;
+    int win_rounds   = 0;
+
+    bool gated_off = false; // for logging transitions only
+
     common_speculative_impl_ngram_simple(
             const common_params_speculative & params, uint32_t n_seq,
             common_ngram_simple_config config)
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE, n_seq, params.ngram_simple.size_m)
         , params(params.ngram_simple)
         , config(config)
+        , last_draft_len(n_seq, 0)
     {
         SPC_TRC("%s", "adding speculative implementation 'ngram-simple'\n");
         SPC_TRC("- size_n=%d, size_m=%d, min_hits=%d\n",
                 this->params.size_n, this->params.size_m, this->params.min_hits);
+    }
+
+    bool should_draft() const {
+        if (win_rounds < WARMUP_ROUNDS) {
+            return true;
+        }
+        if (win_drafted <= 0) {
+            return true;
+        }
+        return (double) win_accepted / (double) win_drafted >= MIN_ACCEPT;
     }
 
     void begin(llama_seq_id /*seq_id*/, const llama_tokens & /*prompt*/) override {
@@ -2088,18 +2122,56 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
     void draft(common_speculative_draft_params_vec & dparams) override {
         assert(dparams.size() == n_seq);
 
+        const bool drafting = should_draft();
+
+        if (!drafting && !gated_off) {
+            SPC_TRC("%s", "ngram-simple: acceptance below threshold, drafting disabled\n");
+            gated_off = true;
+        } else if (drafting && gated_off) {
+            SPC_TRC("%s", "ngram-simple: acceptance recovered, drafting enabled\n");
+            gated_off = false;
+        }
+
         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
             auto & dp = dparams[seq_id];
             if (!dp.drafting) {
                 continue;
             }
 
+            if (!drafting) {
+                dp.result->clear();
+                last_draft_len[seq_id] = 0;
+                continue;
+            }
+
             *dp.result = common_ngram_simple_draft(config, *dp.prompt, dp.id_last);
+            last_draft_len[seq_id] = (int) dp.result->size();
         }
     }
 
-    void accept(llama_seq_id /*seq_id*/, uint16_t /*n_accepted*/, bool /*is_other*/) override {
-        // noop
+    void accept(llama_seq_id seq_id, uint16_t n_accepted, bool /*is_other*/) override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) last_draft_len.size()) {
+            return;
+        }
+
+        const int drafted = last_draft_len[seq_id];
+        if (drafted <= 0) {
+            return;
+        }
+
+        win_drafted  += drafted;
+        win_accepted += std::min<int>(n_accepted, drafted);
+        win_rounds   += 1;
+
+        // halve the window once it is full, so the gate tracks the recent regime
+        // rather than the whole session
+        if (win_rounds >= WINDOW_ROUNDS) {
+            win_drafted  /= 2;
+            win_accepted /= 2;
+            win_rounds   /= 2;
+        }
+
+        last_draft_len[seq_id] = 0;
     }
 };
 
