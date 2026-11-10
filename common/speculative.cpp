@@ -2100,6 +2100,10 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
                 this->params.size_n, this->params.size_m, this->params.min_hits);
     }
 
+    double acceptance() const {
+        return win_drafted > 0 ? (double) win_accepted / (double) win_drafted : 0.0;
+    }
+
     bool should_draft() const {
         if (win_rounds < WARMUP_ROUNDS) {
             return true;
@@ -2107,7 +2111,45 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
         if (win_drafted <= 0) {
             return true;
         }
-        return (double) win_accepted / (double) win_drafted >= MIN_ACCEPT;
+        return acceptance() >= MIN_ACCEPT;
+    }
+
+    // Choose the draft length that maximises expected accepted tokens per unit of
+    // verification cost, given the measured acceptance rate.
+    //
+    // A longer draft amortises the weight read further, but every rejected
+    // position is still paid for in the verification pass. With a geometric
+    // acceptance model the expected yield of k drafts is
+    //     (1 - a^(k+1)) / (1 - a)
+    // and the cost is 1 + (k-1)/A, where A is the measured batch amortisation.
+    // The ratio is not monotonic in k: at a=0.7, k=4 gives 1.73x while k=8 gives
+    // 1.33x; at a=0.9, k=8 wins. So the length has to follow the acceptance rate.
+    int optimal_draft_len() const {
+        const double a = acceptance();
+        if (a <= 0.0) {
+            return 0;
+        }
+        if (a >= 0.999) {
+            return n_max;
+        }
+
+        constexpr double AMORT = 5.0; // measured batch-8 amortisation on this engine
+
+        int    best_k = 1;
+        double best   = 0.0;
+
+        for (int k = 1; k <= n_max; ++k) {
+            const double yield = (1.0 - std::pow(a, k + 1)) / (1.0 - a);
+            const double cost  = 1.0 + (k - 1) / AMORT;
+            const double ratio = yield / cost;
+
+            if (ratio > best) {
+                best   = ratio;
+                best_k = k;
+            }
+        }
+
+        return best_k;
     }
 
     void begin(llama_seq_id /*seq_id*/, const llama_tokens & /*prompt*/) override {
@@ -2123,6 +2165,7 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
         assert(dparams.size() == n_seq);
 
         const bool drafting = should_draft();
+        const int  n_opt    = drafting ? optimal_draft_len() : 0;
 
         if (!drafting && !gated_off) {
             SPC_TRC("%s", "ngram-simple: acceptance below threshold, drafting disabled\n");
@@ -2145,6 +2188,13 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
             }
 
             *dp.result = common_ngram_simple_draft(config, *dp.prompt, dp.id_last);
+
+            // truncate to the length that maximises yield per unit of verification
+            // cost at the current acceptance rate
+            if (n_opt > 0 && (int) dp.result->size() > n_opt) {
+                dp.result->resize(n_opt);
+            }
+
             last_draft_len[seq_id] = (int) dp.result->size();
         }
     }
