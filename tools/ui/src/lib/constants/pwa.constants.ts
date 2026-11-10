@@ -11,20 +11,24 @@ export const MEDIA_QUERIES = {
 	PREFERS_LIGHT: '(prefers-color-scheme: light)'
 } as const;
 
+// Hot / cold. `hot` is the signal colour (the active path); `cold` is its
+// counterpart. These are the sRGB equivalents of the oklch tokens in app.css —
+// keep the two in sync.
 export const THEME_COLORS = {
-	ACCENT_BLUE: '#2563eb',
-	ACCENT_BLUE_HOVER: '#1d4ed8',
-	BACKGROUND_DARK: '#111111',
-	BACKGROUND_LIGHT: 'white',
-	DARK: '#0d0d0d',
-	LIGHT: '#ffffff',
+	ACCENT_HOT: '#db3612',
+	ACCENT_HOT_HOVER: '#b82c0e',
+	ACCENT_COLD: '#009dda',
+	BACKGROUND_DARK: '#0d0b0a',
+	BACKGROUND_LIGHT: '#fdfcfb',
+	DARK: '#0d0b0a',
+	LIGHT: '#fdfcfb',
 	TITLE_UPDATE_ALERT: {
-		BG_DARK: 'zinc-800',
+		BG_DARK: 'neutral-800',
 		BG_LIGHT: 'white',
-		BORDER_DARK: 'zinc-700',
-		BORDER_LIGHT: 'zinc-200',
-		TEXT_DARK: 'zinc-400',
-		TEXT_LIGHT: 'zinc-500'
+		BORDER_DARK: 'neutral-700',
+		BORDER_LIGHT: 'neutral-200',
+		TEXT_DARK: 'neutral-400',
+		TEXT_LIGHT: 'neutral-500'
 	}
 } as const;
 
@@ -53,7 +57,7 @@ export const APPLE_ASSETS = {
 
 export const PWA_MANIFEST = {
 	background_color: THEME_COLORS.BACKGROUND_LIGHT,
-	description: 'Local AI chat interface powered by llama.cpp',
+	description: 'Local inference runtime that keeps the hot path hot',
 	display: 'standalone' as const,
 	icons: [
 		{ sizes: '64x64', src: 'pwa-64x64.png', type: 'image/png' },
