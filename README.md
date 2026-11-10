@@ -1,51 +1,84 @@
-# llama.cpp
+# cortex
 
-> ## 🧠 This fork: **cortex**
->
-> `cortex` adds an **OS-inspired memory-hierarchy governor** to llama.cpp.
->
-> The hard part of serving an LLM is not the arithmetic — it is moving the right
-> bytes to the right place at the right time. That is the same problem the
-> operating system solves (paging, tiering, readahead, page replacement,
-> copy-on-write, granularity), so `cortex` makes the analogy first-class and
-> turns each policy into something you can **choose, measure and swap**.
->
-> ![cortex architecture](docs/cortex-architecture.svg)
->
-> **Status: analysis tooling, not a speedup.** The governor is a standalone
-> binary. It reads device memory and model geometry and prints a plan; it is
-> **not** wired into the inference path, and `src/` is unmodified from upstream.
-> No throughput improvement is claimed or measured. The numbers below are a
-> policy-replay simulation, not end-to-end inference.
->
-> **What it adds**
-> - a dependency-free C++17 policy library (`cortex/`) — tier + cost model,
->   adaptive transfer granularity, cost-model placement planner, and five
->   interchangeable replacement policies: `lru`, `clock`, `2q`, `s3fifo`, and
->   `refault` (MGLRU-style, reuse-distance aware);
-> - predictive, routing-driven readahead, a copy-on-write weight registry,
->   pressure-aware admission control, write-back batching, and arena compaction;
-> - `llama-cortex`, a governor tool that reads your **real** device memory and
->   **real** model geometry and prints the placement plan and the recommended
->   policy.
->
-> **Measured** (scan-pollution replay, 64-block cache, 16-block hot set):
-> `refault` reaches a **17.03 %** hit rate versus **13.19 %** for LRU (+29 %
-> relative) and retains the hot set **16/16** where LRU retains **0/16**.
-> 85/85 unit checks pass.
->
-> ```bash
-> cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON
-> cmake --build build -j --target llama-cortex test-cortex
-> ./build/bin/llama-cortex -m model.gguf -c 8192
-> ```
->
-> **Design, measurements, and an honest statement of what is wired vs. next:
-> [docs/OS_TUNING.md](docs/OS_TUNING.md)**
->
-> Everything below is upstream llama.cpp.
+> A fork of [llama.cpp](https://github.com/ggml-org/llama.cpp) focused on
+> inference performance. Same engine, same GGUF models, same API — with the
+> decode path reworked where the measurements said it was worth it.
+
+![cortex architecture](docs/cortex-changes.svg)
+
+## What changed
+
+Every number below is measured on an M1 Pro (200 GB/s spec peak) with
+Gemma-3-1B Q4_0, 120–150 generated tokens, unless noted. Nothing here is a
+projection.
+
+| change | effect | cost |
+|---|---|---|
+| **Gated n-gram speculation** — draft from the context, verify in one batch, stop when acceptance falls below break-even | **2.6× on copy/rewrite**, up to **4.4×** on repetitive text | none on chat/code (gate turns it off) |
+| **Adaptive draft length** — pick `k` to maximise yield per unit of verification cost, slow-start at 4 | removes the −10% chat regression | — |
+| **Adaptive lookup length** — `size_n` follows draft acceptance, explores short when nothing matches | 2.6× → 4.4× on repetitive text | — |
+| **Output matrix at 4 bits** — Q4_0 is legal when `hidden % 256 ≠ 0`; the Q8_0 fallback was a format artifact, not a sensitivity result | **−19% bytes, +18.6% decode** | **+2.9% perplexity** |
+| **Sequential readahead** — macOS had no `fadvise`; decode walks weights in layer order | neutral when resident, helps when the model exceeds RAM | — |
+| **Prefill ubatch** — weights are re-read per chunk | pp2048 1477 → 1696 tok/s | — |
+
+Speculation is **exact**: verification preserves the target distribution, and
+output was confirmed byte-identical at `--temp 0`.
+
+## Quick start
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON
+cmake --build build -j --target llama-cli llama-server
+
+# interactive
+./build/bin/cortex-cli -m model.gguf
+
+# OpenAI-compatible server
+./build/bin/cortex-server -m model.gguf -c 8192
+```
+
+Speculation is opt-in:
+
+```bash
+./build/bin/cortex-cli -m model.gguf --spec-type ngram-simple
+```
+
+The gate and the adaptive length make it safe to leave on: it finds the
+copy-heavy stretches of a workload and gets out of the way elsewhere.
+
+## Where the time goes
+
+Decode is bandwidth-bound. At 618 MB/token and 100 tok/s the engine moves
+**61.8 GB/s** — about 31% of the 200 GB/s spec peak, and ~41% of what the
+hardware actually sustains. That is the normal operating point for 4-bit
+batch-1 decode on Apple GPUs, not an anomaly.
+
+A CPU profile confirms it: the main thread sits in `__psynch_cvwait` for 51,341
+samples against 32 in `set_logits`. **The CPU is idle waiting on the GPU**, so
+CPU-side micro-optimisation cannot move this number.
+
+That leaves two levers, and only one of them is large:
+
+- **GPU-side efficiency** — the best hand-written native Metal runtime is
+  1.15–1.56× ahead of llama.cpp, and its own paper attributes the win to
+  dispatch overhead rather than faster matvec kernels. Closing it needs a
+  dispatch rewrite.
+- **Bytes per token** — speculation is the only lever that changes this rather
+  than the efficiency of moving them, which is why it is worth more than any
+  kernel tuning available here.
+
+## Documentation
+
+- **[docs/PERF_NOTES.md](docs/PERF_NOTES.md)** — the full measurement log,
+  including the twelve approaches that were tried and did **not** work, with
+  numbers. Read this before optimising anything here.
+- [docs/OS_TUNING.md](docs/OS_TUNING.md) — the memory-hierarchy policy library
+  (`cortex/`), a standalone analysis tool that is not wired into the inference
+  path.
 
 ---
+
+Everything below is upstream llama.cpp.
 
 ![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
 
@@ -63,46 +96,6 @@
 [ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [maintainer PRs](https://github.com/ggml-org/llama.cpp/pulls?q=is%3Apr%20is%3Aopen%20draft%3AFalse%20(author%3Asanmai%20OR%20author%3Argerganov%20OR%20author%3AKitaitiMakoto%20OR%20author%3Adanbev%20OR%20author%3Aaldehir%20OR%20author%3Amax-krasnyansky%20OR%20author%3ACISC%20OR%20author%3Aggerganov%20OR%20author%3Aam17an%20OR%20author%3Ajhen0409%20OR%20author%3Abartowski1182%20OR%20author%3Anikwen%20OR%20author%3Ahipudding%20OR%20author%3Aravi9%20OR%20author%3AServeurpersoCom%20OR%20author%3Athelittlefireman%20OR%20author%3Apwilkin%20OR%20author%3Areeselevine%20OR%20author%3Angxson%20OR%20author%3Ajeffbolznv%20OR%20author%3Amarty1885%20OR%20author%3A0cc4m%20OR%20author%3ATitaniumtown%20OR%20author%3Aangt%20OR%20author%3AIMbackK%20OR%20author%3Aarthw%20OR%20author%3AJohannesGaessler%20OR%20author%3AORippler%20OR%20author%3Aruixiang63%20OR%20author%3Axctan%20OR%20author%3AmasterFoad%20OR%20author%3Aallozaur%20OR%20author%3AAndreas-Krebbel%20OR%20author%3Ayomaytk%20OR%20author%3Aaendk%20OR%20author%3Awine99%20OR%20author%3Agaugarg-nv%20OR%20author%3Ataronaeo%20OR%20author%3Aforforever73%20OR%20author%3Achaxu01%20OR%20author%3Alhez%20OR%20author%3AAlekseiNikiforovIBM%20OR%20author%3Anetrunnereve%20OR%20author%3Afairydreaming%20OR%20author%3Aynankani)%20sort%3Aupdated-desc) / [dev stats](https://github.com/ggml-org/llama.cpp-dev) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
 
 </div>
-
-## Quick start
-
-A few options to get `llama.cpp` installed on your machine:
-
-```bash
-# curl
-curl -LsSf https://llama.app/install.sh | sh
-
-# powershell
-irm https://llama.app/install.ps1 | iex
-```
-
-- Visit https://llama.app and follow the instructions
-- Run with Docker - see our [Docker documentation](docs/docker.md)
-- Download pre-built binaries from the [releases page](https://github.com/ggml-org/llama.cpp/releases)
-- Build from source by cloning this repository - check out [our build guide](docs/build.md)
-
-Once installed:
-
-```sh
-# Download and run a model directly from Hugging Face
-llama cli -hf ggml-org/Qwen3.5-0.8B-GGUF
-
-# Launch OpenAI-compatible API server
-llama serve -hf ggml-org/Qwen3.5-0.8B-GGUF
-```
-
-<table align="center">
-    <tr>
-        <td align="center" width=50%>
-            <img width="1310" height="888" alt="VLM session with `llama cli`" src="https://github.com/user-attachments/assets/88726b48-1713-48aa-a525-95a02e78afc4" />
-            <i>VLM session with <b>llama cli</b></i>
-        </td>
-        <td align="center">
-            <img width="1392" height="958" alt="Built-in web UI against `llama serve` running Qwen 3.6" src="https://github.com/user-attachments/assets/b402f972-2e32-4def-8771-8d849f08cf2e" />
-            <i>Built-in web UI against <b>llama serve</b></i>
-        </td>
-    </tr>
-<table>
 
 ## Description
 
@@ -140,7 +133,7 @@ The `llama.cpp` project is build on top of the [ggml](https://github.com/ggml-or
 | [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
 | [Vulkan](docs/build.md#vulkan) | GPU |
 | [WebGPU](docs/build.md#webgpu) | All |
-| [ZenDNN](docs/build.md#zendnn) | AMD CPU |
+| [ZenDNN](docs/backend/zendnn.md) | AMD CPU |
 
 ## Documentation
 
