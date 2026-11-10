@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <rect width="1180" height="760" fill="#ffffff"/>
+
+  <text x="40" y="46" font-size="26" font-weight="700" fill="#111827">cortex</text>
+  <text x="150" y="46" font-size="16" fill="#6b7280">— an OS-inspired memory-hierarchy governor for LLM inference</text>
+  <text x="40" y="70" font-size="13" fill="#6b7280">the same problem the OS solves: a working set larger than the fastest memory, accessed with reuse and skew</text>
+
+  <!-- ============ column 1: memory hierarchy ============ -->
+  <text x="40" y="112" font-size="13" font-weight="700" fill="#374151" letter-spacing="0.06em">1 · MEMORY HIERARCHY (measured)</text>
+
+  <rect x="40" y="126" width="300" height="62" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="56" y="152" font-size="14" font-weight="700" fill="#1e3a8a">VRAM / unified working set</text>
+  <text x="56" y="172" font-size="12" fill="#1e40af">fp16 KV · resident weights · 200 GB/s · 2 us</text>
+
+  <rect x="40" y="196" width="300" height="62" rx="8" fill="#e0e7ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="56" y="222" font-size="14" font-weight="700" fill="#312e81">wired RAM</text>
+  <text x="56" y="242" font-size="12" fill="#3730a3">pinned hot set · not reclaimable · 200 GB/s · 20 us</text>
+
+  <rect x="40" y="266" width="300" height="62" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="56" y="292" font-size="14" font-weight="700" fill="#334155">pageable RAM</text>
+  <text x="56" y="312" font-size="12" fill="#475569">mmap page cache · reclaimable · 120 GB/s · 60 us</text>
+
+  <rect x="40" y="336" width="300" height="62" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+  <text x="56" y="362" font-size="14" font-weight="700" fill="#78350f">disk / NVMe</text>
+  <text x="56" y="382" font-size="12" fill="#92400e">model file · 3 GB/s · 500 us</text>
+
+  <text x="40" y="424" font-size="12" fill="#6b7280">cost model: slower link's bandwidth + larger tier's latency</text>
+
+  <!-- arrow 1 -> 2 -->
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+  <line x1="348" y1="262" x2="392" y2="262" stroke="#9ca3af" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- ============ column 2: governor ============ -->
+  <text x="400" y="112" font-size="13" font-weight="700" fill="#374151" letter-spacing="0.06em">2 · GOVERNOR (cortex core)</text>
+
+  <rect x="400" y="126" width="330" height="88" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="416" y="152" font-size="14" font-weight="700" fill="#064e3b">tier model + cost model</text>
+  <text x="416" y="172" font-size="12" fill="#065f46">transfer_cost_us(src, dst, bytes)</text>
+  <text x="416" y="190" font-size="12" fill="#065f46">residence_cost_us(tier, bytes)</text>
+  <text x="416" y="206" font-size="12" fill="#065f46">adaptive granularity: choose_block_bytes()</text>
+
+  <rect x="400" y="224" width="330" height="88" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="416" y="250" font-size="14" font-weight="700" fill="#064e3b">placement planner</text>
+  <text x="416" y="270" font-size="12" fill="#065f46">greedy by hotness density (freq / bytes)</text>
+  <text x="416" y="288" font-size="12" fill="#065f46">models per-token cost vs all-on-disk</text>
+  <text x="416" y="304" font-size="12" fill="#065f46">emits an explanation for every decision</text>
+
+  <rect x="400" y="322" width="330" height="76" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="416" y="348" font-size="14" font-weight="700" fill="#064e3b">admission + write-back</text>
+  <text x="416" y="368" font-size="12" fill="#065f46">frequency-gated, pressure-aware promotion</text>
+  <text x="416" y="386" font-size="12" fill="#065f46">batched flush to a slower tier</text>
+
+  <!-- arrow 2 -> 3 -->
+  <line x1="738" y1="262" x2="782" y2="262" stroke="#9ca3af" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- ============ column 3: runtime policies ============ -->
+  <text x="790" y="112" font-size="13" font-weight="700" fill="#374151" letter-spacing="0.06em">3 · RUNTIME POLICIES (pluggable)</text>
+
+  <rect x="790" y="126" width="350" height="120" rx="8" fill="#faf5ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="806" y="152" font-size="14" font-weight="700" fill="#4c1d95">replacement (make_eviction)</text>
+  <rect x="806" y="164" width="70" height="26" rx="5" fill="#ede9fe" stroke="#a78bfa"/>
+  <text x="824" y="182" font-size="12" fill="#5b21b6">lru</text>
+  <rect x="884" y="164" width="70" height="26" rx="5" fill="#ede9fe" stroke="#a78bfa"/>
+  <text x="898" y="182" font-size="12" fill="#5b21b6">clock</text>
+  <rect x="962" y="164" width="70" height="26" rx="5" fill="#ede9fe" stroke="#a78bfa"/>
+  <text x="980" y="182" font-size="12" fill="#5b21b6">2q</text>
+  <rect x="1040" y="164" width="84" height="26" rx="5" fill="#ede9fe" stroke="#a78bfa"/>
+  <text x="1054" y="182" font-size="12" fill="#5b21b6">s3fifo</text>
+  <rect x="806" y="198" width="160" height="30" rx="5" fill="#ddd6fe" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="820" y="218" font-size="12" font-weight="700" fill="#4c1d95">refault (MGLRU-like)</text>
+  <text x="978" y="218" font-size="11" fill="#6b7280">reuse-distance window</text>
+
+  <rect x="790" y="258" width="350" height="70" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="806" y="284" font-size="14" font-weight="700" fill="#7c2d12">predictive readahead</text>
+  <text x="806" y="304" font-size="12" fill="#9a3412">P(expert @ L | expert @ L-1) → prefetch L+1</text>
+  <text x="806" y="320" font-size="12" fill="#9a3412">confidence-gated so speculation cannot waste bandwidth</text>
+
+  <rect x="790" y="340" width="350" height="72" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="806" y="366" font-size="14" font-weight="700" fill="#134e4a">copy-on-write registry</text>
+  <text x="806" y="386" font-size="12" fill="#115e59">refcounted, content-addressed weight sharing</text>
+  <text x="806" y="402" font-size="11" fill="#6b7280">engines share KV blocks today — nobody shares weights</text>
+
+  <!-- ============ bottom: results ============ -->
+  <line x1="40" y1="462" x2="1140" y2="462" stroke="#e5e7eb" stroke-width="1"/>
+
+  <text x="40" y="494" font-size="13" font-weight="700" fill="#374151" letter-spacing="0.06em">4 · MEASURED — scan-pollution replay, 64-block cache, 16-block hot set</text>
+
+  <!-- bar chart -->
+  <g font-size="12">
+    <text x="40" y="530" fill="#111827">lru</text>
+    <rect x="120" y="518" width="132" height="16" fill="#9ca3af"/>
+    <text x="262" y="531" fill="#6b7280">13.19 %   hot set 0/16</text>
+
+    <text x="40" y="558" fill="#111827">clock</text>
+    <rect x="120" y="546" width="132" height="16" fill="#9ca3af"/>
+    <text x="262" y="559" fill="#6b7280">13.19 %   hot set 0/16</text>
+
+    <text x="40" y="586" fill="#111827">2q</text>
+    <rect x="120" y="574" width="165" height="16" fill="#60a5fa"/>
+    <text x="295" y="587" fill="#6b7280">16.48 %   hot set 16/16</text>
+
+    <text x="40" y="614" fill="#111827">s3fifo</text>
+    <rect x="120" y="602" width="167" height="16" fill="#60a5fa"/>
+    <text x="297" y="615" fill="#6b7280">16.69 %   hot set 16/16</text>
+
+    <text x="40" y="642" fill="#111827" font-weight="700">refault</text>
+    <rect x="120" y="630" width="170" height="16" fill="#7c3aed"/>
+    <text x="300" y="643" fill="#4c1d95" font-weight="700">17.03 %   hot set 16/16  (+29 % over LRU)</text>
+
+    <text x="40" y="676" fill="#6b7280">85/85 unit checks pass · planner: 4 598 us/token tiered vs 307 460 us all-on-disk (66.9x)</text>
+    <text x="40" y="698" fill="#6b7280">engine baseline, 1B Q4_K_M on M1 Pro / Metal: pp128 1279.06 t/s · tg64 118.12 t/s</text>
+    <text x="40" y="726" fill="#9ca3af">the margins are modest — which is why replacement policy should be pluggable and measured, not hard-coded</text>
+  </g>
+</svg>

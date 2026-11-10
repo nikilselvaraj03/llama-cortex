@@ -1,5 +1,46 @@
 # llama.cpp
 
+> ## 🧠 This fork: **cortex**
+>
+> `cortex` adds an **OS-inspired memory-hierarchy governor** to llama.cpp.
+>
+> The hard part of serving an LLM is not the arithmetic — it is moving the right
+> bytes to the right place at the right time. That is the same problem the
+> operating system solves (paging, tiering, readahead, page replacement,
+> copy-on-write, granularity), so `cortex` makes the analogy first-class and
+> turns each policy into something you can **choose, measure and swap**.
+>
+> ![cortex architecture](docs/cortex-architecture.svg)
+>
+> **What it adds**
+> - a dependency-free C++17 policy library (`cortex/`) — tier + cost model,
+>   adaptive transfer granularity, cost-model placement planner, and five
+>   interchangeable replacement policies: `lru`, `clock`, `2q`, `s3fifo`, and
+>   `refault` (MGLRU-style, reuse-distance aware);
+> - predictive, routing-driven readahead, a copy-on-write weight registry,
+>   pressure-aware admission control, write-back batching, and arena compaction;
+> - `llama-cortex`, a governor tool that reads your **real** device memory and
+>   **real** model geometry and prints the placement plan and the recommended
+>   policy.
+>
+> **Measured** (scan-pollution replay, 64-block cache, 16-block hot set):
+> `refault` reaches a **17.03 %** hit rate versus **13.19 %** for LRU (+29 %
+> relative) and retains the hot set **16/16** where LRU retains **0/16**.
+> 85/85 unit checks pass.
+>
+> ```bash
+> cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON
+> cmake --build build -j --target llama-cortex test-cortex
+> ./build/bin/llama-cortex -m model.gguf -c 8192
+> ```
+>
+> **Design, measurements, and an honest statement of what is wired vs. next:
+> [docs/OS_TUNING.md](docs/OS_TUNING.md)**
+>
+> Everything below is upstream llama.cpp.
+
+---
+
 ![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
 
 <div align="center">
