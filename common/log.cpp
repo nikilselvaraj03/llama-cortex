@@ -260,6 +260,26 @@ public:
                 entry.msg.resize(n + 1);
                 vsnprintf(entry.msg.data(), entry.msg.size(), fmt, args_copy);
             }
+
+            // Rebrand the log echo. The server's prefixes are function names, so
+            // they read "llama_*"; the llama library rewrites its own in
+            // llama_log_internal_v, but the server logs through this path and
+            // would otherwise still say llama.
+            {
+                std::string m(entry.msg.data());
+
+                size_t pos = 0;
+                while ((pos = m.find("llama_", pos)) != std::string::npos) {
+                    m.replace(pos, 6, "cortex_");
+                    pos += 7;
+                }
+
+                if (m.size() + 1 > entry.msg.size()) {
+                    entry.msg.resize(m.size() + 1);
+                }
+
+                memcpy(entry.msg.data(), m.c_str(), m.size() + 1);
+            }
 #else
             // hack for bolding arguments
 
