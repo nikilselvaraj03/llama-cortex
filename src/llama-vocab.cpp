@@ -109,6 +109,15 @@ struct llm_tokenizer_spm : llm_tokenizer {
 struct llm_tokenizer_spm_session {
     llm_tokenizer_spm_session(const llama_vocab & vocab) : vocab(vocab) {}
 
+    // Reset for reuse across fragments. Keeping the allocations alive matters:
+    // this session runs once per fragment and a long prompt has hundreds of
+    // thousands of them, so freeing and re-allocating the buffers each time is
+    // pure overhead. work_queue needs no reset - the merge loop drains it.
+    void clear() {
+        symbols.clear();
+        rev_merge.clear();
+    }
+
     void tokenize(const std::string & text, std::vector<llama_token> & output) {
         // split string into utf8 chars
         int index = 0;
@@ -236,7 +245,12 @@ private:
 
     std::vector<llm_symbol> symbols;
     llm_bigram_spm::queue work_queue;
-    std::map<std::string, std::pair<int, int>> rev_merge;
+
+    // text -> the symbol pair that produced it. A hash map, not std::map: the
+    // keys are substrings, so the tree paid a string comparison per level plus
+    // a rebalance per insert, which a profile of a 13 MB run showed as one of
+    // the top costs in tokenization.
+    std::unordered_map<std::string, std::pair<int, int>> rev_merge;
 };
 
 //
@@ -3643,10 +3657,28 @@ void llama_vocab::impl::init_tokenizer(enum llama_vocab_type type) {
 // #define PRETOKENIZERDEBUG
 
 void llama_vocab::impl::tokenizer_st_partition(std::forward_list<fragment_buffer_variant> & buffer, bool parse_special) const {
-    // for each special token
+    // Index the special tokens by their first byte, once.
+    //
+    // The original implementation scanned the whole text once per special token,
+    // which is O(special_tokens * text_length): with ~100 special tokens on a
+    // modern chat model that is 100 full passes over the prompt. A CPU profile
+    // of a 13 MB tokenize run put 4034 of ~4880 active samples in this function.
+    //
+    // cache_special_tokens is sorted by descending text length, so trying the
+    // candidates at a position in that order yields the longest match, which is
+    // the precedence the per-token loop produced.
+    struct st_entry {
+        llama_token id;
+        const std::string * text;
+        uint32_t attr;
+    };
+
+    static constexpr size_t N_FIRST_BYTE = 256;
+
+    std::array<std::vector<st_entry>, N_FIRST_BYTE> by_first_byte;
+
     for (const llama_token special_id : cache_special_tokens) {
         const auto & data = vocab.get_token_data(special_id);
-        const auto & text = data.text;
 
         if (!parse_special && (data.attr & (LLAMA_TOKEN_ATTR_CONTROL | LLAMA_TOKEN_ATTR_UNKNOWN))) {
             // Ignore control and unknown tokens when parse_special == false
@@ -3656,108 +3688,104 @@ void llama_vocab::impl::tokenizer_st_partition(std::forward_list<fragment_buffer
             // This is mostly relevant for neox-style tokenizers (mpt, olmo, stablelm, etc.)
         }
 
-        // for each text fragment
-        std::forward_list<fragment_buffer_variant>::iterator it = buffer.begin();
-        while (it != buffer.end()) {
-            auto & fragment = (*it);
+        if (data.text.empty()) {
+            continue;
+        }
 
-            // if a fragment is text ( not yet processed )
-            if (fragment.type == FRAGMENT_BUFFER_VARIANT_TYPE_RAW_TEXT) {
-                const auto & raw_text = fragment.raw_text;
+        by_first_byte[(uint8_t) data.text[0]].push_back({ special_id, &data.text, data.attr });
+    }
 
-                auto raw_text_base_offset = fragment.offset;
-                auto raw_text_base_length = fragment.length;
+    std::forward_list<fragment_buffer_variant> result;
 
-                // loop over the text
-                while (true) {
-                    // find the first occurrence of a given special token in this fragment
-                    //  passing offset argument only limit the "search area" but match coordinates
-                    //  are still relative to the source full raw_text
-                    //  string_view begins at pos 0 for the same reason
-                    auto match = std::string_view(raw_text.data(), raw_text_base_offset + raw_text_base_length).find(text, raw_text_base_offset);
+    // std::forward_list has no push_back, so track the tail explicitly
+    auto tail = result.before_begin();
 
-                    // no occurrences found, stop processing this fragment for a given special token
-                    if (match == std::string::npos) break;
+    auto emit_text = [&](const std::string & t, int64_t off, int64_t len) {
+        tail = result.emplace_after(tail, t, off, len);
+    };
+    auto emit_token = [&](llama_token id) {
+        tail = result.emplace_after(tail, id);
+    };
+    auto emit_frag = [&](const fragment_buffer_variant & f) {
+        tail = result.emplace_after(tail, f);
+    };
 
-#ifdef PRETOKENIZERDEBUG
-                    LLAMA_LOG_WARN("FF: (%ld %ld %ld) '%s'\n", raw_text->length(), raw_text_base_offset, raw_text_base_length, raw_text->substr(raw_text_base_offset, raw_text_base_length).c_str());
-#endif
-                    auto source = std::distance(buffer.begin(), it);
+    for (const auto & fragment : buffer) {
+        if (fragment.type != FRAGMENT_BUFFER_VARIANT_TYPE_RAW_TEXT) {
+            emit_frag(fragment);
+            continue;
+        }
 
-                    // if match is further than base offset
-                    //  then we have some text to the left of it
-                    if (match > raw_text_base_offset) {
-                        // left
-                        const int64_t left_reminder_offset = raw_text_base_offset + 0;
-                        int64_t left_reminder_length = match - raw_text_base_offset;
+        const auto & raw_text = fragment.raw_text;
 
-                        if (data.attr & LLAMA_TOKEN_ATTR_LSTRIP) {
-                            while (left_reminder_length > 0 && isspace(raw_text[left_reminder_offset + left_reminder_length - 1])) {
-                                left_reminder_length--;
-                            }
-                        }
+        int64_t pos       = fragment.offset;
+        const int64_t end = fragment.offset + fragment.length;
 
-                        if (left_reminder_length > 0) {
-                            buffer.emplace_after(it, raw_text, left_reminder_offset, left_reminder_length);
-                            it++;
-                        }
+        int64_t text_start = pos;
 
-#ifdef PRETOKENIZERDEBUG
-                        LLAMA_LOG_WARN("FL: (%ld %ld) '%s'\n", left_reminder_offset, left_reminder_length, raw_text->substr(left_reminder_offset, left_reminder_length).c_str());
-#endif
-                    }
+        while (pos < end) {
+            const auto & candidates = by_first_byte[(uint8_t) raw_text[pos]];
 
-                    // special token
-                    buffer.emplace_after(it, special_id);
-                    it++;
+            if (candidates.empty()) {
+                pos++;
+                continue;
+            }
 
-                    // right
-                    if (match + text.length() < raw_text_base_offset + raw_text_base_length) {
-                        int64_t right_reminder_offset = match + text.length();
-                        int64_t right_reminder_length = raw_text_base_length - ((match - raw_text_base_offset) + text.length());
+            const st_entry * matched   = nullptr;
+            int64_t          match_len = 0;
 
-                        if (data.attr & LLAMA_TOKEN_ATTR_RSTRIP) {
-                            while (right_reminder_length > 0 && isspace(raw_text[right_reminder_offset])) {
-                                right_reminder_offset++;
-                                right_reminder_length--;
-                            }
-                        }
+            for (const auto & cand : candidates) {
+                const int64_t len = (int64_t) cand.text->size();
 
-                        if (right_reminder_length > 0) {
-                            buffer.emplace_after(it, raw_text, right_reminder_offset, right_reminder_length);
-                            it++;
-                        }
+                if (len > end - pos) {
+                    continue;
+                }
 
-#ifdef PRETOKENIZERDEBUG
-                        LLAMA_LOG_WARN("FR: (%ld %ld) '%s'\n", right_reminder_offset, right_reminder_length, raw_text->substr(right_reminder_offset, right_reminder_length).c_str());
-#endif
-
-                        if (source == 0) {
-                            buffer.erase_after(buffer.before_begin());
-                        } else {
-                            buffer.erase_after(std::next(buffer.begin(), (source - 1)));
-                        }
-
-                        // repeat for the right side
-                        raw_text_base_offset = right_reminder_offset;
-                        raw_text_base_length = right_reminder_length;
-
-#ifdef PRETOKENIZERDEBUG
-                        LLAMA_LOG_WARN("RR: (%ld %ld) '%s'\n", raw_text_base_offset, raw_text_base_length, raw_text->substr(raw_text_base_offset, raw_text_base_length).c_str());
-#endif
-                    } else {
-                        if (source == 0) {
-                            buffer.erase_after(buffer.before_begin());
-                        } else {
-                            buffer.erase_after(std::next(buffer.begin(), (source - 1)));
-                        }
-                        break;
-                    }
+                if (raw_text.compare(pos, len, *cand.text) == 0) {
+                    matched   = &cand;
+                    match_len = len;
+                    break;
                 }
             }
-            it++;
+
+            if (matched == nullptr) {
+                pos++;
+                continue;
+            }
+
+            // text to the left of the match
+            int64_t left_len = pos - text_start;
+
+            if (matched->attr & LLAMA_TOKEN_ATTR_LSTRIP) {
+                while (left_len > 0 && isspace((uint8_t) raw_text[text_start + left_len - 1])) {
+                    left_len--;
+                }
+            }
+
+            if (left_len > 0) {
+                emit_text(raw_text, text_start, left_len);
+            }
+
+            emit_token(matched->id);
+
+            pos += match_len;
+
+            // whitespace the special token owns on its right is dropped
+            if (matched->attr & LLAMA_TOKEN_ATTR_RSTRIP) {
+                while (pos < end && isspace((uint8_t) raw_text[pos])) {
+                    pos++;
+                }
+            }
+
+            text_start = pos;
+        }
+
+        if (text_start < end) {
+            emit_text(raw_text, text_start, end - text_start);
         }
     }
+
+    buffer = std::move(result);
 }
 
 // NOTE: avoid ever using this except for building the token_to_piece caches
@@ -3837,6 +3865,8 @@ std::vector<llama_token> llama_vocab::impl::tokenize(
                     is_prev_special = true;
                 }
 
+                llm_tokenizer_spm_session session(vocab);
+
                 for (const auto & fragment : fragment_buffer) {
                     if (fragment.type == FRAGMENT_BUFFER_VARIANT_TYPE_RAW_TEXT) {
                         std::string text;
@@ -3852,7 +3882,7 @@ std::vector<llama_token> llama_vocab::impl::tokenize(
                         LLAMA_LOG_WARN("TT: (%ld %ld %ld) '%s'\n", text.length(), fragment.offset, fragment.length, text.c_str());
 #endif
                         llama_escape_whitespace(text);
-                        llm_tokenizer_spm_session session(vocab);
+                        session.clear();
                         session.tokenize(text, output);
                         is_prev_special = false;
                     } else { // if (fragment.type == FRAGMENT_BUFFER_VARIANT_TYPE_TOKEN)
