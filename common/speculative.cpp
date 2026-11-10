@@ -2125,6 +2125,14 @@ struct common_speculative_impl_ngram_simple : public common_speculative_impl {
     // The ratio is not monotonic in k: at a=0.7, k=4 gives 1.73x while k=8 gives
     // 1.33x; at a=0.9, k=8 wins. So the length has to follow the acceptance rate.
     int optimal_draft_len() const {
+        // Slow start. Before there is any acceptance signal, a long draft is a
+        // large blind bet: one 45-token draft that is fully rejected costs a
+        // 45-row verification pass and measured -10% on a chat prompt. Start
+        // short and let the acceptance estimate earn a longer draft.
+        if (win_rounds < WARMUP_ROUNDS) {
+            return std::min(n_max, 4);
+        }
+
         const double a = acceptance();
         if (a <= 0.0) {
             return 0;
